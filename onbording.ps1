@@ -19,60 +19,12 @@ Start-Transcript -Path $logPath -ErrorAction SilentlyContinue
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
 
 function Ensure-Admin {
-    # Jeżeli mamy uprawnienia admina — nic nie rób
-    if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-        return
-    }
-
-    # Jeżeli jesteśmy w trybie nieinteraktywnym — nie możemy pokazać UAC, więc zgłoś błąd lub zakończ
-    if ($NonInteractive) {
-        Write-Warning "Brak uprawnień administratora i tryb nieinteraktywny. Nie moge podnieść uprawnień."
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Warning "URUCHOM POWERSHELL JAKO ADMINISTRATOR I SPROBUJ PONOWNIE!"
+        Start-Sleep -Seconds 5
         Stop-Transcript -ErrorAction SilentlyContinue
         Exit 1
     }
-
-    Write-Host "Skrypt nie jest uruchomiony jako administrator. Uruchamiam ponownie z podniesionymi uprawnieniami..." -ForegroundColor Yellow
-
-    # Zakończ transcript przed ponownym uruchomieniem aby uniknac blokady pliku
-    Stop-Transcript -ErrorAction SilentlyContinue
-
-    # Znajdz sciezke aktualnego interpretera (powershell.exe lub pwsh.exe)
-    try {
-        $procPath = (Get-Process -Id $PID -ErrorAction Stop).Path
-    } catch {
-        # Fallback
-        $procPath = "powershell.exe"
-    }
-
-    # Sciezka do skryptu
-    $scriptPath = $MyInvocation.MyCommand.Definition
-
-    # Zbuduj liste argumentow: -NoProfile -ExecutionPolicy Bypass -File "skrypt" oraz przekazane switch'e/parametry
-    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$scriptPath`"")
-
-    # Jeżeli chcesz przekazywać przełączniki z oryginalnego uruchomienia, zbuduj je
-    if ($PSBoundParameters.ContainsKey('NoReboot')) { $argList += "-NoReboot" }
-    if ($PSBoundParameters.ContainsKey('NonInteractive')) { $argList += "-NonInteractive" }
-
-    # Dodatkowe niepozycjonowane argumenty (jeżeli były)
-    if ($args.Count -gt 0) {
-        foreach ($a in $args) {
-            # odpowiednio escape'uj cudzyslowia
-            $escaped = $a -replace '"', '\"'
-            $argList += "`"$escaped`""
-        }
-    }
-
-    # Uruchom nowy proces z Verb RunAs (spowoduje UAC)
-    try {
-        Start-Process -FilePath $procPath -ArgumentList $argList -Verb RunAs -Wait
-    } catch {
-        Write-Warning "Nie udalo sie uruchomic skryptu z uprawnieniami administratora: $_"
-        Exit 1
-    }
-
-    # Po uruchomieniu nowego procesu zakoncz obecny
-    Exit 0
 }
 
 function Ensure-PSGalleryTrusted {
