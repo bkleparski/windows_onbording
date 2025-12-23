@@ -88,21 +88,21 @@ function Read-Indices {
     return $result
 }
 
-# Funkcja uruchamiajaca skrypt Chrisa w osobnym oknie PowerShell i czekajaca na jego zakonczenie
-function Run-ChrisTitusScript {
-    param([string]$Url = "https://christitus.com/win")
+# Funkcja uruchamiajaca skrypt Ravnet (winutil) w osobnym oknie PowerShell i czekajaca na jego zakonczenie
+function Run-RavnetScript {
+    param([string]$Url = "https://raw.githubusercontent.com/bkleparski/winutil/refs/heads/main/winutil.ps1")
     if ($NonInteractive) {
-        Write-Host "Tryb nieinteraktywny: pomijam uruchomienie skryptu Chris Titus." -ForegroundColor Yellow
+        Write-Host "Tryb nieinteraktywny: pomijam uruchomienie skryptu Ravnet." -ForegroundColor Yellow
         return
     }
-    Write-Host "Uruchamiam skrypt Chris Titus: $Url (nowe okno PowerShell). Poczekam az narzedzie sie zamknie..." -ForegroundColor Yellow
+    Write-Host "Uruchamiam skrypt Ravnet: $Url (nowe okno PowerShell). Poczekam az narzedzie sie zamknie..." -ForegroundColor Yellow
     try {
-        # Argumenty do uruchomienia nowego PowerShell z bypass i wykonaniem pobranego skryptu
-        $psArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"irm '$Url' | iex`""
+        # Argumenty do uruchomienia nowego PowerShell z bypass i wykonaniem pobranego skryptu (uzycie iwr -useb | iex)
+        $psArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"iwr -useb '$Url' | iex`""
         Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs -Wait
-        Write-Host "Skrypt Chris Titus zakonczyl dzialanie." -ForegroundColor Green
+        Write-Host "Skrypt Ravnet (winutil) zakonczyl dzialanie." -ForegroundColor Green
     } catch {
-        Write-Warning "Nie udalo sie uruchomic skryptu Chris Titus: $_"
+        Write-Warning "Nie udalo sie uruchomic skryptu Ravnet: $_"
     }
 }
 
@@ -135,8 +135,8 @@ Write-Host "Instalacja aplikacji (winget)..." -ForegroundColor Yellow
 $apps = @("7zip.7zip", "Adobe.Acrobat.Reader. 64-bit", "Google.Chrome", "Oracle.JavaRuntimeEnvironment", "TightVNC.TightVNC", "Fortinet. FortiClientVPN")
 Install-WinGetApps -Apps $apps
 
-# NOWY KROK: Uruchom skrypt Chrisa i poczekaj az zostanie zamkniety, potem przejdz do zarzadzania aplikacjami
-Run-ChrisTitusScript -Url "https://christitus.com/win"
+# NOWY KROK: Uruchom skrypt Ravnet (winutil) i poczekaj az zostanie zamkniety, potem przejdz do zarzadzania aplikacjami
+Run-RavnetScript -Url "https://raw.githubusercontent.com/bkleparski/winutil/refs/heads/main/winutil.ps1"
 
 # KROK 4: Zarzadzanie zainstalowanymi aplikacjami
 Write-Host "Sprawdzanie zainstalowanych aplikacji..." -ForegroundColor Yellow
@@ -207,16 +207,42 @@ if (-not $NonInteractive) {
     Write-Host "Tryb nieinteraktywny:  pomijam czesc dotyczaca recznego usuwania aplikacji." -ForegroundColor Yellow
 }
 
-# KROK 5: Restart (opcjonalny)
+# KROK 5: Restart (potwierdzenie lub rezygnacja)
 if ($NoReboot) {
     Write-Host "Parametr -NoReboot ustawiony.  Pomijam restart." -ForegroundColor Cyan
 } else {
-    Write-Host "RESTART ZA 10 SEKUND!  (mozesz anulowac przerwaniem skryptu)" -ForegroundColor Red
-    Start-Sleep -Seconds 10
-    try {
-        Restart-Computer -Force
-    } catch {
-        Write-Warning "Restart nie powiodl sie: $_"
+    if ($NonInteractive) {
+        Write-Host "Tryb nieinteraktywny: restart zostanie wykonany za 10 sekund." -ForegroundColor Red
+        Start-Sleep -Seconds 10
+        try {
+            Restart-Computer -Force
+        } catch {
+            Write-Warning "Restart nie powiodl sie: $_"
+        }
+    } else {
+        # Interaktywny: zapytaj uzytkownika czy zrestartowac
+        do {
+            $response = Read-Host "Czy chcesz zrestartowac komputer teraz? (t/n)"
+            switch ($response.ToLower()) {
+                't' {
+                    Write-Host "Restart zostanie wykonany za 10 sekund. Przerwij skrypt, jesli chcesz anulowac." -ForegroundColor Red
+                    Start-Sleep -Seconds 10
+                    try {
+                        Restart-Computer -Force
+                    } catch {
+                        Write-Warning "Restart nie powiodl sie: $_"
+                    }
+                    break
+                }
+                'n' {
+                    Write-Host "Anulowano restart. Mozesz zrestartowac recznie pozniej." -ForegroundColor Cyan
+                    break
+                }
+                default {
+                    Write-Host "Nieprawidlowy wybor. Wpisz 't' aby potwierdzic restart lub 'n' aby zrezygnowac." -ForegroundColor Yellow
+                }
+            }
+        } while ($true)
     }
 }
 
