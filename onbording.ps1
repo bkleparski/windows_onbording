@@ -11,15 +11,15 @@ param(
 $logPath = Join-Path -Path $env:TEMP -ChildPath ("onboarding_{0:yyyyMMdd_HHmmss}.log" -f (Get-Date))
 Start-Transcript -Path $logPath -ErrorAction SilentlyContinue
 
-# 1. Wymuszenie TLS 1.2 (dla pobierania modułów na starszych kompilacjach Win10)
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# 1. Wymuszenie TLS 1.2 (dla pobierania modulow na starszych kompilacjach Win10)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]:: Tls12
 
-# 2. Odblokowanie wykonywania skryptów TYLKO dla obecnego procesu (sesji)
+# 2. Odblokowanie wykonywania skryptow TYLKO dla obecnego procesu (sesji)
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
 
 function Ensure-Admin {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-        Write-Warning "URUCHOM POWERSHELL JAKO ADMINISTRATOR I SPRÓBUJ PONOWNIE!"
+        Write-Warning "URUCHOM POWERSHELL JAKO ADMINISTRATOR I SPROBUJ PONOWNIE!"
         Start-Sleep -Seconds 5
         Stop-Transcript -ErrorAction SilentlyContinue
         Exit 1
@@ -40,12 +40,12 @@ function Ensure-PSGalleryTrusted {
 function Install-ModuleIfMissing {
     param([string]$Name)
     if (-not (Get-Module -ListAvailable -Name $Name)) {
-        Write-Host "Instalowanie modułu $Name..." -ForegroundColor Yellow
+        Write-Host "Instalowanie modulu $Name..." -ForegroundColor Yellow
         try {
             Install-Module -Name $Name -Force -Scope CurrentUser -AllowClobber -ErrorAction Stop
-            Write-Host "Zainstalowano moduł $Name" -ForegroundColor Green
+            Write-Host "Zainstalowano modul $Name" -ForegroundColor Green
         } catch {
-            Write-Warning "Nie udało się zainstalować modułu $Name: $_"
+            Write-Warning "Nie udalo sie zainstalowac modulu $Name`: $_"
         }
     }
     Import-Module $Name -ErrorAction SilentlyContinue
@@ -54,20 +54,20 @@ function Install-ModuleIfMissing {
 function Install-WinGetApps {
     param([string[]]$Apps)
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Warning "winget nie jest dostępny na tej maszynie. Pomiń instalację aplikacji lub zainstaluj winget."
+        Write-Warning "winget nie jest dostepny na tej maszynie. Pomin instalacje aplikacji lub zainstaluj winget."
         return
     }
 
     foreach ($app in $Apps) {
-        Write-Host "WinGet: $app" -ForegroundColor Cyan
+        Write-Host "WinGet:  $app" -ForegroundColor Cyan
         try {
             $args = @("install", "--id", $app, "-e", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements")
-            # dodaj --silent, ale może nie działać dla wszystkich pakietów - ignoruj błąd (winget zwróci kod)
+            # dodaj --silent, ale może nie dzialac dla wszystkich pakietow - ignoruj blad (winget zwroci kod)
             $args += "--silent"
             & winget @args
-            Write-Host "Zainstalowano: $app" -ForegroundColor Green
+            Write-Host "Zainstalowano:  $app" -ForegroundColor Green
         } catch {
-            Write-Warning "Nie udało się zainstalować: $app. Błąd: $_"
+            Write-Warning "Nie udalo sie zainstalowac: $app.  Blad: $_"
         }
     }
 }
@@ -88,7 +88,7 @@ function Read-Indices {
     return $result
 }
 
-# Upewnij się, że mamy uprawnienia
+# Upewnij sie, ze mamy uprawnienia
 Ensure-Admin
 
 Write-Host "--- INICJALIZACJA SRODOWISKA ---" -ForegroundColor Cyan
@@ -96,7 +96,7 @@ Ensure-PSGalleryTrusted
 
 Write-Host "--- START INSTALACJI ---" -ForegroundColor Cyan
 
-# KROK 1: Moduł Windows Update
+# KROK 1: Modul Windows Update
 Install-ModuleIfMissing -Name "PSWindowsUpdate"
 
 # KROK 2: Uruchomienie Windows Update (bez restartu)
@@ -104,9 +104,9 @@ Write-Host "Szukanie i instalacja aktualizacji Windows..." -ForegroundColor Yell
 try {
     if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
         Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot -ErrorAction Stop
-        Write-Host "Windows Update zakończone (bez restartu)" -ForegroundColor Green
+        Write-Host "Windows Update zakonczone (bez restartu)" -ForegroundColor Green
     } else {
-        Write-Warning "Get-WindowsUpdate nieznaleziony. Moduł PSWindowsUpdate nie załadował się poprawnie."
+        Write-Warning "Get-WindowsUpdate nieznaleziony. Modul PSWindowsUpdate nie zaladowal sie poprawnie."
     }
 } catch {
     Write-Warning "Blad Windows Update: $_"
@@ -114,19 +114,19 @@ try {
 
 # KROK 3: WinGet Aplikacje
 Write-Host "Instalacja aplikacji (winget)..." -ForegroundColor Yellow
-$apps = @("7zip.7zip", "Adobe.Acrobat.Reader.64-bit", "Google.Chrome", "Oracle.JavaRuntimeEnvironment", "TightVNC.TightVNC", "Fortinet.FortiClientVPN")
+$apps = @("7zip.7zip", "Adobe.Acrobat.Reader. 64-bit", "Google.Chrome", "Oracle.JavaRuntimeEnvironment", "TightVNC.TightVNC", "Fortinet. FortiClientVPN")
 Install-WinGetApps -Apps $apps
 
-# KROK 4: Zarządzanie zainstalowanymi aplikacjami
+# KROK 4: Zarzadzanie zainstalowanymi aplikacjami
 Write-Host "Sprawdzanie zainstalowanych aplikacji..." -ForegroundColor Yellow
 
-# Pobierz listę zainstalowanych aplikacji (unikalne nazwy) - ogranicz do bieżącej listy użytkowników
+# Pobierz liste zainstalowanych aplikacji (unikalne nazwy) - ogranicz do biezacej listy uzytkownikow
 try {
     $installedApps = Get-AppxPackage -AllUsers |
         Select-Object @{Name='DisplayName';Expression={if ($_.Name) { $_.Name } else { $_.PackageFullName }}}, PackageFullName, Name |
         Sort-Object DisplayName -Unique
 } catch {
-    Write-Warning "Nie udało się pobrać listy aplikacji: $_"
+    Write-Warning "Nie udalo sie pobrac listy aplikacji: $_"
     $installedApps = @()
 }
 
@@ -136,15 +136,15 @@ $remainingCount = $installedApps.Count - $maxApps
 
 Write-Host "Zainstalowane aplikacje (pierwsze $maxApps z $($installedApps.Count)):" -ForegroundColor Cyan
 for ($i = 0; $i -lt $displayApps.Count; $i++) {
-    Write-Host "$('{0,2}' -f ($i + 1)). $($displayApps[$i].DisplayName)" -ForegroundColor White
+    Write-Host "$('{0,2}' -f ($i + 1)). $($displayApps[$i]. DisplayName)" -ForegroundColor White
 }
 if ($remainingCount -gt 0) {
-    Write-Host " ... i $remainingCount więcej aplikacji" -ForegroundColor DarkGray
+    Write-Host " ... i $remainingCount wiecej aplikacji" -ForegroundColor DarkGray
 }
 
 if (-not $NonInteractive) {
     do {
-        Write-Host "Podaj numery aplikacji do usunięcia oddzielone przecinkami (0 aby zakończyć): " -ForegroundColor Yellow -NoNewline
+        Write-Host "Podaj numery aplikacji do usuniecia oddzielone przecinkami (0 aby zakonczyc): " -ForegroundColor Yellow -NoNewline
         $selection = Read-Host
 
         if ($selection -eq "0") {
@@ -155,47 +155,47 @@ if (-not $NonInteractive) {
         $indices = Read-Indices -input $selection -max $displayApps.Count
 
         if ($indices.Count -eq 0) {
-            Write-Host "Brak poprawnych numerów. Spróbuj ponownie." -ForegroundColor Red
+            Write-Host "Brak poprawnych numerow.  Sprobuj ponownie." -ForegroundColor Red
         } else {
             foreach ($index in $indices) {
                 $appToRemove = $displayApps[$index]
                 Write-Host "Usuwanie aplikacji: $($appToRemove.DisplayName) (PackageFullName: $($appToRemove.PackageFullName))" -ForegroundColor Yellow
                 try {
-                    # Spróbuj usunąć pakiet dla bieżącego użytkownika
+                    # Sprobuj usunac pakiet dla biezacego uzytkownika
                     Remove-AppxPackage -Package $appToRemove.PackageFullName -ErrorAction Stop
-                    Write-Host "Aplikacja $($appToRemove.DisplayName) została pomyślnie usunięta dla bieżącego użytkownika." -ForegroundColor Green
+                    Write-Host "Aplikacja $($appToRemove. DisplayName) zostala pomyslnie usunieta dla biezacego uzytkownika." -ForegroundColor Green
                 } catch {
-                    Write-Warning "Nie udało się usunąć aplikacji jako obecny użytkownik: $_"
-                    # Spróbuj usunąć pakiet provisioned (dla przyszłych użytkowników) - wymaga nazwy paczki (Name)
+                    Write-Warning "Nie udalo sie usunac aplikacji jako obecny uzytkownik: $_"
+                    # Sprobuj usunac pakiet provisioned (dla przyszlych uzytkownikow) - wymaga nazwy paczki (Name)
                     if ($appToRemove.Name) {
                         try {
                             Remove-AppxProvisionedPackage -Online -PackageName $appToRemove.Name -ErrorAction Stop
-                            Write-Host "Usunięto pakiet provisioned ($($appToRemove.Name)) z obrazu systemu (dla nowych użytkowników)." -ForegroundColor Green
+                            Write-Host "Usunieto pakiet provisioned ($($appToRemove.Name)) z obrazu systemu (dla nowych uzytkownikow)." -ForegroundColor Green
                         } catch {
-                            Write-Warning "Nie udało się usunąć pakietu provisioned ($($appToRemove.Name)): $_"
+                            Write-Warning "Nie udalo sie usunac pakietu provisioned ($($appToRemove.Name)): $_"
                         }
                     }
                 }
             }
         }
 
-        Write-Host "Czy chcesz usunąć więcej aplikacji? (t/n): " -ForegroundColor Yellow -NoNewline
+        Write-Host "Czy chcesz usunac wiecej aplikacji? (t/n): " -ForegroundColor Yellow -NoNewline
         $continue = Read-Host
     } while ($continue -eq "t" -or $continue -eq "T")
 } else {
-    Write-Host "Tryb nieinteraktywny: pomijam część dotyczącą ręcznego usuwania aplikacji." -ForegroundColor Yellow
+    Write-Host "Tryb nieinteraktywny:  pomijam czesc dotyczaca recznego usuwania aplikacji." -ForegroundColor Yellow
 }
 
 # KROK 5: Restart (opcjonalny)
 if ($NoReboot) {
-    Write-Host "Parametr -NoReboot ustawiony. Pomijam restart." -ForegroundColor Cyan
+    Write-Host "Parametr -NoReboot ustawiony.  Pomijam restart." -ForegroundColor Cyan
 } else {
-    Write-Host "RESTART ZA 10 SEKUND! (możesz anulować przerwaniem skryptu)" -ForegroundColor Red
+    Write-Host "RESTART ZA 10 SEKUND!  (mozesz anulowac przerwaniem skryptu)" -ForegroundColor Red
     Start-Sleep -Seconds 10
     try {
         Restart-Computer -Force
     } catch {
-        Write-Warning "Restart nie powiódł się: $_"
+        Write-Warning "Restart nie powiodl sie: $_"
     }
 }
 
