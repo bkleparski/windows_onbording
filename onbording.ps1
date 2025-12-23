@@ -88,6 +88,24 @@ function Read-Indices {
     return $result
 }
 
+# Funkcja uruchamiajaca skrypt Chrisa w osobnym oknie PowerShell i czekajaca na jego zakonczenie
+function Run-ChrisTitusScript {
+    param([string]$Url = "https://christitus.com/win")
+    if ($NonInteractive) {
+        Write-Host "Tryb nieinteraktywny: pomijam uruchomienie skryptu Chris Titus." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "Uruchamiam skrypt Chris Titus: $Url (nowe okno PowerShell). Poczekam az narzedzie sie zamknie..." -ForegroundColor Yellow
+    try {
+        # Argumenty do uruchomienia nowego PowerShell z bypass i wykonaniem pobranego skryptu
+        $psArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"irm '$Url' | iex`""
+        Start-Process -FilePath "powershell.exe" -ArgumentList $psArgs -Wait
+        Write-Host "Skrypt Chris Titus zakonczyl dzialanie." -ForegroundColor Green
+    } catch {
+        Write-Warning "Nie udalo sie uruchomic skryptu Chris Titus: $_"
+    }
+}
+
 # Upewnij sie, ze mamy uprawnienia
 Ensure-Admin
 
@@ -116,6 +134,9 @@ try {
 Write-Host "Instalacja aplikacji (winget)..." -ForegroundColor Yellow
 $apps = @("7zip.7zip", "Adobe.Acrobat.Reader. 64-bit", "Google.Chrome", "Oracle.JavaRuntimeEnvironment", "TightVNC.TightVNC", "Fortinet. FortiClientVPN")
 Install-WinGetApps -Apps $apps
+
+# NOWY KROK: Uruchom skrypt Chrisa i poczekaj az zostanie zamkniety, potem przejdz do zarzadzania aplikacjami
+Run-ChrisTitusScript -Url "https://christitus.com/win"
 
 # KROK 4: Zarzadzanie zainstalowanymi aplikacjami
 Write-Host "Sprawdzanie zainstalowanych aplikacji..." -ForegroundColor Yellow
