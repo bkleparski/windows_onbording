@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Ravnet Windows Tools — Launcher
+    Ravnet Windows Tools - Launcher
     irm go.ebartnet.pl/onbording | iex
 #>
 
@@ -9,7 +9,6 @@ $ErrorActionPreference = "Continue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
 
-# Transcript — log na Pulpicie
 $logPath = "$env:USERPROFILE\Desktop\RavnetTools_{0:yyyyMMdd_HHmmss}.log" -f (Get-Date)
 Start-Transcript -Path $logPath -ErrorAction SilentlyContinue
 Write-Host "  Log sesji: $logPath" -ForegroundColor DarkGray
@@ -19,15 +18,15 @@ $BASE = "https://raw.githubusercontent.com/bkleparski/windows_onbording/main"
 function Show-Menu {
     Clear-Host
     Write-Host ""
-    Write-Host "  ╔═════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║      Ravnet Windows Tools — Launcher      ║" -ForegroundColor Cyan
-    Write-Host "  ║  github.com/bkleparski/windows_onbording  ║" -ForegroundColor DarkGray
-    Write-Host "  ╚═════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  ============================================" -ForegroundColor Cyan
+    Write-Host "      Ravnet Windows Tools -- Launcher        " -ForegroundColor Cyan
+    Write-Host "      github.com/bkleparski/windows_onbording " -ForegroundColor DarkGray
+    Write-Host "  ============================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  Log: $logPath" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  [1]  Nowy komputer    — pelny onboarding" -ForegroundColor Yellow
-    Write-Host "  [2]  Czyszczenie      — przygotowanie do oddania" -ForegroundColor Magenta
+    Write-Host "  [1]  Nowy komputer    -- pelny onboarding" -ForegroundColor Yellow
+    Write-Host "  [2]  Czyszczenie      -- przygotowanie do oddania" -ForegroundColor Magenta
     Write-Host ""
     Write-Host "  [0]  Wyjdz" -ForegroundColor DarkGray
     Write-Host ""
@@ -36,21 +35,28 @@ function Show-Menu {
 function Invoke-RemoteScript {
     param([string]$Url, [string]$Name)
     Write-Host "  Pobieranie: $Url" -ForegroundColor DarkGray
-    $tmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.ps1'
     try {
-        Invoke-RestMethod -Uri $Url -OutFile $tmp -ErrorAction Stop
+        # Pobierz jako tekst (PS dekoduje UTF-8 automatycznie)
+        $content = Invoke-RestMethod -Uri $Url -ErrorAction Stop
+
+        # Zapisz z BOM zeby PS 5.1 poprawnie interpretowal UTF-8
+        $tmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.ps1'
+        $bom = [byte[]](0xEF, 0xBB, 0xBF)
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
+        [System.IO.File]::WriteAllBytes($tmp, $bom + $bytes)
+
         Write-Host "  Uruchamianie: $Name" -ForegroundColor Cyan
         Write-Host ""
         & $tmp
     } catch {
         Write-Host ""
-        Write-Host "  BLAD pobierania skryptu: $_" -ForegroundColor Red
-        Write-Host "  Sprawdz polaczenie z internetem i sprobuj ponownie." -ForegroundColor Yellow
+        Write-Host "  BLAD: $_" -ForegroundColor Red
+        Write-Host "  Sprawdz polaczenie z internetem." -ForegroundColor Yellow
     } finally {
-        Remove-Item $tmp -ErrorAction SilentlyContinue
+        if (Test-Path $tmp) { Remove-Item $tmp -ErrorAction SilentlyContinue }
     }
     Write-Host ""
-    Write-Host "  Skrypt zakonczony. Nacisnij Enter aby wrocic do menu..." -ForegroundColor DarkGray
+    Write-Host "  Skrypt zakonczony. Nacisnij Enter aby wrocic do menu..."
     $null = Read-Host
 }
 

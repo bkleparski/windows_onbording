@@ -14,12 +14,11 @@ Write-Host "  Log: $logPath" -ForegroundColor DarkGray
 function Write-Step {
     param([string]$Text, [int]$Step, [int]$Total)
     Write-Host ""
-    Write-Host "  " + ("-" * 55) -ForegroundColor DarkCyan
+    Write-Host "  --------------------------------------------------" -ForegroundColor DarkCyan
     Write-Host "  KROK $Step/$Total : $Text" -ForegroundColor Cyan
-    Write-Host "  " + ("-" * 55) -ForegroundColor DarkCyan
+    Write-Host "  --------------------------------------------------" -ForegroundColor DarkCyan
     Write-Host ""
 }
-
 function Write-OK   { param([string]$T); Write-Host "  [OK]   $T" -ForegroundColor Green }
 function Write-WARN { param([string]$T); Write-Host "  [WARN] $T" -ForegroundColor Yellow }
 function Write-ERR  { param([string]$T); Write-Host "  [ERR]  $T" -ForegroundColor Red }
@@ -29,13 +28,12 @@ function Ask-YesNo {
     do { $r = Read-Host "  $Question [t/n]" } while ($r.ToLower() -notin @('t','n'))
     return $r.ToLower() -eq 't'
 }
-
 function Pause-OnError {
     Write-Host "  Nacisnij Enter aby kontynuowac..." -ForegroundColor DarkGray
     $null = Read-Host
 }
 
-# ── 1. Windows Update ────────────────────────────────────────────────────────────
+# -- 1. Windows Update ---------------------------------------------------------
 Write-Step "Windows Update" 1 5
 try {
     Write-Host "  Konfiguracja PSGallery..." -ForegroundColor Yellow
@@ -52,7 +50,7 @@ try {
     }
     Import-Module PSWindowsUpdate -ErrorAction SilentlyContinue
 
-    Write-Host "  Szukanie aktualizacji (to moze potrwac kilka minut)..." -ForegroundColor Yellow
+    Write-Host "  Szukanie aktualizacji (moze potrwac kilka minut)..." -ForegroundColor Yellow
     $updates = Get-WindowsUpdate -AcceptAll -IgnoreReboot -ErrorAction Stop
     if ($updates.Count -gt 0) {
         Write-Host "  Instalacja $($updates.Count) aktualizacji..." -ForegroundColor Yellow
@@ -66,7 +64,7 @@ try {
     Pause-OnError
 }
 
-# ── 2. Aplikacje winget ───────────────────────────────────────────────────────────
+# -- 2. Aplikacje winget -------------------------------------------------------
 Write-Step "Instalacja aplikacji (winget)" 2 5
 $apps = @(
     "7zip.7zip",
@@ -81,13 +79,12 @@ if (Get-Command winget -ErrorAction SilentlyContinue) {
     foreach ($app in $apps) {
         Write-Host "  Instalacja: $app ..." -ForegroundColor Cyan
         try {
-            $result = winget install --id $app -e --source winget `
-                --accept-package-agreements --accept-source-agreements --silent 2>&1
+            winget install --id $app -e --source winget `
+                --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335135) {
-                Write-OK "$app"
+                Write-OK $app
             } else {
                 Write-WARN "$app (kod: $LASTEXITCODE)"
-                Write-Host "  $result" -ForegroundColor DarkGray
             }
         } catch {
             Write-ERR "$app : $_"
@@ -98,7 +95,7 @@ if (Get-Command winget -ErrorAction SilentlyContinue) {
     Pause-OnError
 }
 
-# ── 3. Dolaczenie do domeny AD ─────────────────────────────────────────────
+# -- 3. Dolaczenie do domeny AD ------------------------------------------------
 Write-Step "Dolaczenie do domeny Active Directory" 3 5
 if (Ask-YesNo "Czy chcesz dolaczyc komputer do domeny AD?") {
     $domain = Read-Host "  Podaj nazwe domeny (np. firma.local)"
@@ -113,30 +110,30 @@ if (Ask-YesNo "Czy chcesz dolaczyc komputer do domeny AD?") {
             Pause-OnError
         }
     } else {
-        Write-WARN "Nie podano nazwy domeny — pominieto."
+        Write-WARN "Nie podano nazwy domeny -- pominieto."
     }
 } else {
     Write-Host "  Pominieto dolaczanie do domeny." -ForegroundColor DarkGray
 }
 
-# ── 4. WinUtil ─────────────────────────────────────────────────────────────
+# -- 4. WinUtil ----------------------------------------------------------------
 Write-Step "Ravnet WinUtil" 4 5
 if (Ask-YesNo "Czy chcesz uruchomic WinUtil (zaawansowana konfiguracja)?") {
-    Write-Host "  Uruchamianie WinUtil w nowym oknie (poczekaj az zamkniesz to okno)..." -ForegroundColor Yellow
+    Write-Host "  Uruchamianie WinUtil w nowym oknie..." -ForegroundColor Yellow
     try {
         Start-Process -FilePath "powershell.exe" `
             -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm go.ebartnet.pl/winutil | iex`"" `
             -Verb RunAs -Wait
         Write-OK "WinUtil zakonczony"
     } catch {
-        Write-ERR "Blad uruchamiania WinUtil: $_"
+        Write-ERR "WinUtil: $_"
         Pause-OnError
     }
 } else {
     Write-Host "  Pominieto WinUtil." -ForegroundColor DarkGray
 }
 
-# ── 5. Restart ───────────────────────────────────────────────────────────────
+# -- 5. Restart ----------------------------------------------------------------
 Write-Step "Podsumowanie i restart" 5 5
 Stop-Transcript -ErrorAction SilentlyContinue
 Write-Host "  Log zapisany: $logPath" -ForegroundColor Green
