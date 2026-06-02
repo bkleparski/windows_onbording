@@ -1,19 +1,28 @@
 #Requires -RunAsAdministrator
 <#
-.SYNOPSIS
-    Czyszczenie komputera przed oddaniem nowemu uzytkownikowi
-    Uruchamiany przez launcher: irm go.ebartnet.pl/onbording | iex
+.SYNOPSIS Czyszczenie komputera przed oddaniem nowemu uzytkownikowi
 #>
 
+$ErrorActionPreference = "Continue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+
+$logPath = "$env:USERPROFILE\Desktop\Cleanup_{0:yyyyMMdd_HHmmss}.log" -f (Get-Date)
+Start-Transcript -Path $logPath -ErrorAction SilentlyContinue
+Write-Host "  Log: $logPath" -ForegroundColor DarkGray
 
 function Write-Step {
     param([string]$Text, [int]$Step, [int]$Total)
     Write-Host ""
-    Write-Host "  ── KROK $Step/$Total : $Text " -ForegroundColor Magenta
+    Write-Host "  " + ("-" * 55) -ForegroundColor DarkMagenta
+    Write-Host "  KROK $Step/$Total : $Text" -ForegroundColor Magenta
+    Write-Host "  " + ("-" * 55) -ForegroundColor DarkMagenta
     Write-Host ""
 }
+
+function Write-OK   { param([string]$T); Write-Host "  [OK]   $T" -ForegroundColor Green }
+function Write-WARN { param([string]$T); Write-Host "  [WARN] $T" -ForegroundColor Yellow }
+function Write-ERR  { param([string]$T); Write-Host "  [ERR]  $T" -ForegroundColor Red }
 
 function Ask-YesNo {
     param([string]$Question)
@@ -21,8 +30,14 @@ function Ask-YesNo {
     return $r.ToLower() -eq 't'
 }
 
+function Pause-AfterError {
+    Write-Host "  Nacisnij Enter aby kontynuowac..." -ForegroundColor DarkGray
+    $null = Read-Host
+}
+
 function Get-FolderSizeMB {
     param([string]$Path)
+    if (-not (Test-Path $Path)) { return 0 }
     try {
         $bytes = (Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
             Measure-Object -Property Length -Sum).Sum
@@ -32,10 +47,17 @@ function Get-FolderSizeMB {
 
 function Remove-FolderContents {
     param([string]$Path, [string]$Label)
-    if (-not (Test-Path $Path)) { return }
+    if (-not (Test-Path $Path)) {
+        Write-Host "  [--]   $Label (nie znaleziono)" -ForegroundColor DarkGray
+        return 0
+    }
     $mb = Get-FolderSizeMB $Path
-    Remove-Item "$Path\*" -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host ("  [OK] {0,-28} (-{1} MB)" -f $Label, $mb) -ForegroundColor Green
+    try {
+        Remove-Item "$Path\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Write-OK ("$Label (-$mb MB)")
+    } catch {
+        Write-ERR "$Label : $_"
+    }
     return $mb
 }
 
@@ -44,8 +66,9 @@ Write-Host ""
 Write-Host "  ╔═════════════════════════════════════════════╗" -ForegroundColor Magenta
 Write-Host "  ║   Czyszczenie komputera — przed oddaniem       ║" -ForegroundColor Magenta
 Write-Host "  ╚═════════════════════════════════════════════╝" -ForegroundColor Magenta
+Write-Host "  Log: $logPath" -ForegroundColor DarkGray
 
-# ── KROK 0: SYSPREP ──────────────────────────────────────────────────────────
+# ── KROK 0: SYSPREP ───────────────────────────────────────────────────────
 Write-Step "Reset do stanu fabrycznego (Sysprep)" 0 5
 Write-Host "  UWAGA: Sysprep usunie WSZYSTKIE dane, konta uzytkownikow," -ForegroundColor Red
 Write-Host "  aplikacje i ustawienia. System uruchomi sie jak nowy komputer." -ForegroundColor Red
@@ -53,173 +76,197 @@ Write-Host ""
 if (Ask-YesNo "Wykonac SYSPREP (usunie WSZYSTKO bezpowrotnie)?") {
     Write-Host ""
     Write-Host "  OSTATNIE OSTRZEZENIE: wszystkie dane zostana trwale usuniete." -ForegroundColor Red
-    if (Ask-YesNo "  Na pewno kontynuowac?") {
-        Write-Host "  Uruchamianie Sysprep... system wylaczy sie automatycznie." -ForegroundColor Red
-        Start-Sleep -Seconds 3
-        Start-Process -FilePath "C:\Windows\System32\Sysprep\sysprep.exe" `
-            -ArgumentList "/oobe /generalize /shutdown" -Wait
+    if (Ask-YesNo "  Na pewno kontynuowac sysprep?") {
+        $sysprepPath = "C:\Windows\System32\Sysprep\sysprep.exe"
+        if (Test-Path $sysprepPath) {
+            Write-Host "  Uruchamianie Sysprep... system wylaczy sie automatycznie." -ForegroundColor Red
+            Stop-Transcript -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            Start-Process -FilePath $sysprepPath -ArgumentList "/oobe /generalize /shutdown" -Wait
+        } else {
+            Write-ERR "Nie znaleziono sysprep.exe w $sysprepPath"
+            Pause-AfterError
+        }
         exit 0
     }
 }
-Write-Host "  Pominieto Sysprep. Przechodze do recznego czyszczenia..." -ForegroundColor DarkGray
+Write-Host "  Pominieto Sysprep. Przechodze do recznego czyszczenia." -ForegroundColor DarkGray
 
-# ── KROK 1: PROFILE UZYTKOWNIKOW ───────────────────────────────────────────────
+# ── KROK 1: PROFILE UZYTKOWNIKOW ─────────────────────────────────────────────
 Write-Step "Profile uzytkownikow" 1 5
-$currentUser = $env:USERNAME
-$profiles = Get-CimInstance -ClassName Win32_UserProfile |
-    Where-Object { -not $_.Special -and $_.LocalPath -notmatch "\\$currentUser$" }
+try {
+    $currentUser = $env:USERNAME
+    $profiles = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop |
+        Where-Object { -not $_.Special -and $_.LocalPath -notmatch "\\$currentUser$" }
 
-if ($profiles.Count -eq 0) {
-    Write-Host "  Brak dodatkowych profili do usuniecia." -ForegroundColor DarkGray
-} else {
-    Write-Host "  Profile uzytkownikow (poza aktualnym '$currentUser'):" -ForegroundColor Yellow
-    $profiles | ForEach-Object { Write-Host "    • $($_.LocalPath)" -ForegroundColor White }
-    Write-Host ""
-    if (Ask-YesNo "Usunac wszystkie wymienione profile?") {
-        foreach ($p in $profiles) {
-            try {
-                Remove-CimInstance -InputObject $p -ErrorAction Stop
-                Write-Host "  [OK] Usunieto: $($p.LocalPath)" -ForegroundColor Green
-            } catch {
-                Write-Warning "  Blad $($p.LocalPath): $_"
-            }
-        }
+    if ($profiles.Count -eq 0) {
+        Write-OK "Brak dodatkowych profili."
     } else {
-        Write-Host "  Pominieto usuwanie profili." -ForegroundColor DarkGray
+        Write-Host "  Profile (poza aktualnym '$currentUser'):" -ForegroundColor Yellow
+        $profiles | ForEach-Object { Write-Host "    • $($_.LocalPath)" -ForegroundColor White }
+        Write-Host ""
+        if (Ask-YesNo "Usunac wszystkie wymienione profile?") {
+            foreach ($p in $profiles) {
+                try {
+                    Remove-CimInstance -InputObject $p -ErrorAction Stop
+                    Write-OK "Usunieto: $($p.LocalPath)"
+                } catch {
+                    Write-ERR "Blad usuwania $($p.LocalPath): $_"
+                }
+            }
+        } else {
+            Write-Host "  Pominieto." -ForegroundColor DarkGray
+        }
     }
+} catch {
+    Write-ERR "Pobieranie profili: $_"
+    Pause-AfterError
 }
 
 # ── KROK 2: CZYSZCZENIE ──────────────────────────────────────────────────────────
-Write-Step "Czyszczenie plikow tymczasowych i cache" 2 5
-$totalFreed = 0
-
-$totalFreed += Remove-FolderContents "C:\Windows\Temp"           "Temp systemowy"
-$totalFreed += Remove-FolderContents $env:TEMP                  "Temp uzytkownika"
-$totalFreed += Remove-FolderContents "C:\Windows\Prefetch"      "Prefetch"
-$totalFreed += Remove-FolderContents "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache" "Chrome cache"
-$totalFreed += Remove-FolderContents "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache" "Edge cache"
+Write-Step "Czyszczenie plikow i cache" 2 5
+$totalMB = 0
+$totalMB += Remove-FolderContents "C:\Windows\Temp"                                                   "Temp systemowy"
+$totalMB += Remove-FolderContents $env:TEMP                                                            "Temp uzytkownika"
+$totalMB += Remove-FolderContents "C:\Windows\Prefetch"                                                "Prefetch"
+$totalMB += Remove-FolderContents "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache"           "Chrome cache"
+$totalMB += Remove-FolderContents "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache"          "Edge cache"
+$totalMB += Remove-FolderContents "$env:LOCALAPPDATA\Mozilla\Firefox\Profiles"                        "Firefox cache"
 
 # Kosz
-Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-Write-Host "  [OK] Kosz oprózniony" -ForegroundColor Green
+try {
+    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+    Write-OK "Kosz oprózniony"
+} catch { Write-WARN "Kosz: $_" }
 
 # Windows Update cache
 try {
     Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
-    $wuPath = "C:\Windows\SoftwareDistribution\Download"
-    $totalFreed += Remove-FolderContents $wuPath "WU Download cache"
+    $totalMB += Remove-FolderContents "C:\Windows\SoftwareDistribution\Download" "WU Download cache"
     Start-Service -Name wuauserv -ErrorAction SilentlyContinue
-} catch {}
+} catch { Write-WARN "WU cache: $_" }
 
 # DISM
-Write-Host "  Czyszczenie komponentow Windows (DISM)..." -ForegroundColor Yellow
-Dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1 | Out-Null
-Write-Host "  [OK] DISM zakonczone" -ForegroundColor Green
+Write-Host "  Czyszczenie komponentow Windows (DISM, to moze potrwac)..." -ForegroundColor Yellow
+try {
+    $dismResult = Dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1
+    Write-OK "DISM zakonczone"
+} catch { Write-WARN "DISM: $_" }
 
 Write-Host ""
-Write-Host "  Lacznie zwolniono ok. $([math]::Round($totalFreed,1)) MB" -ForegroundColor Cyan
+Write-Host "  Lacznie zwolniono ok. $([math]::Round($totalMB,1)) MB" -ForegroundColor Cyan
 
 # ── KROK 3: APLIKACJE ───────────────────────────────────────────────────────────
 Write-Step "Dezinstalacja aplikacji" 3 5
 if (Ask-YesNo "Czy chcesz odinstalowac aplikacje?") {
-    Write-Host "  Pobieranie listy aplikacji z rejestru..." -ForegroundColor Yellow
-    $regPaths = @(
-        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-    $pkgs = Get-ItemProperty -Path $regPaths -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -and $_.UninstallString } |
-        Sort-Object DisplayName |
-        Select-Object DisplayName, DisplayVersion, UninstallString -Unique
+    Write-Host "  Pobieranie listy z rejestru..." -ForegroundColor Yellow
+    try {
+        $regPaths = @(
+            'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        $pkgs = Get-ItemProperty -Path $regPaths -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -and $_.UninstallString } |
+            Sort-Object DisplayName |
+            Group-Object DisplayName | ForEach-Object { $_.Group[0] } |
+            Select-Object DisplayName, DisplayVersion, UninstallString
 
-    if ($pkgs.Count -eq 0) {
-        Write-Host "  Brak aplikacji w rejestrze." -ForegroundColor DarkGray
-    } else {
-        Write-Host ""
-        for ($i = 0; $i -lt $pkgs.Count; $i++) {
-            Write-Host ("  [{0,3}] {1} ({2})" -f ($i + 1), $pkgs[$i].DisplayName, $pkgs[$i].DisplayVersion) -ForegroundColor White
+        if ($pkgs.Count -eq 0) {
+            Write-Host "  Brak aplikacji w rejestrze." -ForegroundColor DarkGray
+        } else {
+            Write-Host ""
+            for ($i = 0; $i -lt $pkgs.Count; $i++) {
+                Write-Host ("  [{0,3}] {1}  v{2}" -f ($i + 1), $pkgs[$i].DisplayName, $pkgs[$i].DisplayVersion) -ForegroundColor White
+            }
+            Write-Host ""
+            Write-Host "  [  0] Odinstaluj WSZYSTKIE" -ForegroundColor Red
+            Write-Host ""
+            $sel = Read-Host "  Numery oddzielone przecinkami (lub Enter aby pominac)"
+
+            if (-not [string]::IsNullOrWhiteSpace($sel)) {
+                if ($sel.Trim() -eq '0') {
+                    $toRemove = $pkgs
+                } else {
+                    $indices = $sel -split ',' |
+                        ForEach-Object { $_.Trim() } |
+                        Where-Object { $_ -match '^\d+$' } |
+                        ForEach-Object { [int]$_ - 1 } |
+                        Where-Object { $_ -ge 0 -and $_ -lt $pkgs.Count }
+                    $toRemove = @($pkgs[$indices])
+                }
+
+                foreach ($app in $toRemove) {
+                    if (-not $app -or -not $app.DisplayName) { continue }
+                    Write-Host "  Usuwanie: $($app.DisplayName)..." -ForegroundColor Cyan
+                    try {
+                        $cmd = $app.UninstallString.Trim()
+                        if ($cmd -imatch 'MsiExec') {
+                            $code = [regex]::Match($cmd, '\{[A-Za-z0-9-]+\}').Value
+                            if ($code) {
+                                Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $code /qn /norestart" -Wait -ErrorAction Stop
+                            } else {
+                                throw "Brak kodu MSI w: $cmd"
+                            }
+                        } else {
+                            Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$cmd`" /S /VERYSILENT /quiet" -Wait -ErrorAction Stop
+                        }
+                        Write-OK $app.DisplayName
+                    } catch {
+                        Write-ERR "$($app.DisplayName): $_"
+                    }
+                }
+            }
         }
-        Write-Host ""
-        Write-Host "  [  0] Odinstaluj WSZYSTKIE" -ForegroundColor Red
-        Write-Host ""
-        $sel = Read-Host "  Podaj numery oddzielone przecinkami (lub Enter aby pominac)"
+    } catch {
+        Write-ERR "Lista aplikacji: $_"
+        Pause-AfterError
+    }
+} else {
+    Write-Host "  Pominieto." -ForegroundColor DarkGray
+}
 
-        if (-not [string]::IsNullOrWhiteSpace($sel)) {
-            if ($sel.Trim() -eq '0') {
-                $toRemove = $pkgs
-            } else {
+# ── KROK 4: HARMONOGRAM I AUTOSTART ────────────────────────────────────────────
+Write-Step "Harmonogram zadan i autostart" 4 5
+if (Ask-YesNo "Czy chcesz wyczyścic harmonogram i autostart?") {
+
+    # Harmonogram
+    Write-Host "  Niestandardowe zadania harmonogramu:" -ForegroundColor Yellow
+    try {
+        $tasks = Get-ScheduledTask -ErrorAction Stop |
+            Where-Object { $_.TaskPath -notlike '\Microsoft\*' } |
+            Sort-Object TaskName
+
+        if ($tasks.Count -eq 0) {
+            Write-OK "Brak niestandardowych zadan"
+        } else {
+            for ($i = 0; $i -lt $tasks.Count; $i++) {
+                Write-Host ("  [{0,3}] {1}{2}" -f ($i + 1), $tasks[$i].TaskPath, $tasks[$i].TaskName) -ForegroundColor White
+            }
+            Write-Host ""
+            $sel = Read-Host "  Numery do usuniecia (lub Enter aby pominac)"
+            if (-not [string]::IsNullOrWhiteSpace($sel)) {
                 $indices = $sel -split ',' |
                     ForEach-Object { $_.Trim() } |
                     Where-Object { $_ -match '^\d+$' } |
                     ForEach-Object { [int]$_ - 1 } |
-                    Where-Object { $_ -ge 0 -and $_ -lt $pkgs.Count }
-                $toRemove = @($pkgs[$indices])
-            }
-
-            foreach ($app in $toRemove) {
-                if (-not $app) { continue }
-                Write-Host "  Usuwanie: $($app.DisplayName)..." -ForegroundColor Cyan
-                try {
-                    $cmd = $app.UninstallString
-                    if ($cmd -match 'MsiExec') {
-                        $code = [regex]::Match($cmd, '\{[A-Z0-9-]+\}').Value
-                        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $code /qn /norestart" -Wait -ErrorAction Stop
-                    } else {
-                        # Próba cichej dezinstalacji
-                        $cleanCmd = $cmd.Trim('"')
-                        Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$cmd`" /S /VERYSILENT /quiet" -Wait -ErrorAction Stop
-                    }
-                    Write-Host "  [OK] $($app.DisplayName)" -ForegroundColor Green
-                } catch {
-                    Write-Warning "  Nie udalo sie usunac: $($app.DisplayName) — $($_.Exception.Message)"
+                    Where-Object { $_ -ge 0 -and $_ -lt $tasks.Count }
+                foreach ($idx in $indices) {
+                    try {
+                        Unregister-ScheduledTask -TaskName $tasks[$idx].TaskName `
+                            -TaskPath $tasks[$idx].TaskPath -Confirm:$false -ErrorAction Stop
+                        Write-OK "Usunieto: $($tasks[$idx].TaskName)"
+                    } catch { Write-ERR "$($tasks[$idx].TaskName): $_" }
                 }
             }
         }
-    }
-} else {
-    Write-Host "  Pominieto dezinstalacje." -ForegroundColor DarkGray
-}
-
-# ── KROK 4: HARMONOGRAM I AUTOSTART ─────────────────────────────────────────────
-Write-Step "Harmonogram zadan i autostart" 4 5
-if (Ask-YesNo "Czy chcesz wyczyścic harmonogram zadan i autostart?") {
-
-    # Harmonogram — tylko niestandardowe zadania
-    Write-Host "  Niestandardowe zadania harmonogramu:" -ForegroundColor Yellow
-    $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue |
-        Where-Object { $_.TaskPath -notlike '\Microsoft\*' } |
-        Sort-Object TaskName
-
-    if ($tasks.Count -eq 0) {
-        Write-Host "  Brak niestandardowych zadan." -ForegroundColor DarkGray
-    } else {
-        for ($i = 0; $i -lt $tasks.Count; $i++) {
-            Write-Host ("  [{0,3}] {1}{2}" -f ($i + 1), $tasks[$i].TaskPath, $tasks[$i].TaskName) -ForegroundColor White
-        }
-        Write-Host ""
-        $sel = Read-Host "  Numery do usuniecia (lub Enter aby pominac)"
-        if (-not [string]::IsNullOrWhiteSpace($sel)) {
-            $indices = $sel -split ',' |
-                ForEach-Object { $_.Trim() } |
-                Where-Object { $_ -match '^\d+$' } |
-                ForEach-Object { [int]$_ - 1 } |
-                Where-Object { $_ -ge 0 -and $_ -lt $tasks.Count }
-            foreach ($idx in $indices) {
-                try {
-                    Unregister-ScheduledTask -TaskName $tasks[$idx].TaskName `
-                        -TaskPath $tasks[$idx].TaskPath -Confirm:$false -ErrorAction Stop
-                    Write-Host "  [OK] Usunieto: $($tasks[$idx].TaskName)" -ForegroundColor Green
-                } catch {
-                    Write-Warning "  Blad: $_"
-                }
-            }
-        }
+    } catch {
+        Write-ERR "Harmonogram: $_"
     }
 
-    # Autostart — rejestr
+    # Autostart rejestr
     Write-Host ""
-    Write-Host "  Wpisy autostartu (rejestr):" -ForegroundColor Yellow
+    Write-Host "  Wpisy autostartu:" -ForegroundColor Yellow
     $runKeys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
@@ -228,24 +275,23 @@ if (Ask-YesNo "Czy chcesz wyczyścic harmonogram zadan i autostart?") {
     $startupItems = @()
     foreach ($key in $runKeys) {
         if (Test-Path $key) {
-            $vals = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
-            $vals.PSObject.Properties |
-                Where-Object { $_.Name -notmatch '^PS' } |
-                ForEach-Object {
-                    $startupItems += [PSCustomObject]@{
-                        Key   = $key
-                        Name  = $_.Name
-                        Value = $_.Value
+            try {
+                $vals = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+                $vals.PSObject.Properties |
+                    Where-Object { $_.Name -notmatch '^PS' } |
+                    ForEach-Object {
+                        $startupItems += [PSCustomObject]@{ Key=$key; Name=$_.Name; Value=$_.Value }
                     }
-                }
+            } catch { Write-WARN "Odczyt $key : $_" }
         }
     }
 
     if ($startupItems.Count -eq 0) {
-        Write-Host "  Brak wpisów autostartu." -ForegroundColor DarkGray
+        Write-OK "Brak wpisów autostartu"
     } else {
         for ($i = 0; $i -lt $startupItems.Count; $i++) {
-            Write-Host ("  [{0,3}] {1}  =  {2}" -f ($i + 1), $startupItems[$i].Name, $startupItems[$i].Value) -ForegroundColor White
+            Write-Host ("  [{0,3}] {1}" -f ($i + 1), $startupItems[$i].Name) -ForegroundColor White
+            Write-Host ("       {0}" -f $startupItems[$i].Value) -ForegroundColor DarkGray
         }
         Write-Host ""
         $sel = Read-Host "  Numery do usuniecia (lub Enter aby pominac)"
@@ -259,45 +305,47 @@ if (Ask-YesNo "Czy chcesz wyczyścic harmonogram zadan i autostart?") {
                 try {
                     Remove-ItemProperty -Path $startupItems[$idx].Key `
                         -Name $startupItems[$idx].Name -Force -ErrorAction Stop
-                    Write-Host "  [OK] Usunieto: $($startupItems[$idx].Name)" -ForegroundColor Green
-                } catch {
-                    Write-Warning "  Blad: $_"
-                }
+                    Write-OK "Usunieto: $($startupItems[$idx].Name)"
+                } catch { Write-ERR "$($startupItems[$idx].Name): $_" }
             }
         }
     }
 } else {
-    Write-Host "  Pominieto harmonogram i autostart." -ForegroundColor DarkGray
+    Write-Host "  Pominieto." -ForegroundColor DarkGray
 }
 
-# ── KROK 5: RESET PRZEGLADAREK ──────────────────────────────────────────────────
-Write-Step "Reset przegladarek do ustawien domyslnych" 5 5
+# ── KROK 5: RESET PRZEGLADAREK ───────────────────────────────────────────────
+Write-Step "Reset przegladarek do domyslnych" 5 5
 if (Ask-YesNo "Czy chcesz zresetowac Chrome i Edge do domyslnych?") {
 
     # Chrome
     $chromePath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default"
     if (Test-Path $chromePath) {
-        Get-Process -Name "chrome" -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep -Seconds 1
-        Remove-Item $chromePath -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  [OK] Chrome — profil usuniety (reset do domyslnych)" -ForegroundColor Green
+        try {
+            Get-Process -Name "chrome" -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 2
+            Remove-Item $chromePath -Recurse -Force -ErrorAction Stop
+            Write-OK "Chrome — profil usuniety"
+        } catch { Write-ERR "Chrome: $_" }
     } else {
-        Write-Host "  Chrome nie znaleziony lub brak profilu." -ForegroundColor DarkGray
+        Write-Host "  Chrome: profil nie znaleziony." -ForegroundColor DarkGray
     }
 
     # Edge
     $edgePath = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default"
     if (Test-Path $edgePath) {
-        Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep -Seconds 1
-        Remove-Item $edgePath -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  [OK] Edge — profil usuniety (reset do domyslnych)" -ForegroundColor Green
+        try {
+            Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 2
+            Remove-Item $edgePath -Recurse -Force -ErrorAction Stop
+            Write-OK "Edge — profil usuniety"
+        } catch { Write-ERR "Edge: $_" }
     } else {
-        Write-Host "  Edge nie znaleziony lub brak profilu." -ForegroundColor DarkGray
+        Write-Host "  Edge: profil nie znaleziony." -ForegroundColor DarkGray
     }
 
 } else {
-    Write-Host "  Pominieto reset przegladarek." -ForegroundColor DarkGray
+    Write-Host "  Pominieto." -ForegroundColor DarkGray
 }
 
 # ── KONIEC ───────────────────────────────────────────────────────────────────
@@ -306,10 +354,13 @@ Write-Host "  ╔═════════════════════
 Write-Host "  ║   Czyszczenie zakonczone. Komputer gotowy.   ║" -ForegroundColor Green
 Write-Host "  ╚═════════════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Zalecany restart przed oddaniem komputera nowemu uzytkownikowi." -ForegroundColor Yellow
+Stop-Transcript -ErrorAction SilentlyContinue
+Write-Host "  Pelny log: $logPath" -ForegroundColor Green
 Write-Host ""
 if (Ask-YesNo "Zrestartowac teraz?") {
-    Write-Host "  Restart za 10 sekund..." -ForegroundColor Red
+    Write-Host "  Restart za 10 sekund... Ctrl+C aby anulowac." -ForegroundColor Red
     Start-Sleep -Seconds 10
     Restart-Computer -Force
+} else {
+    Write-Host "  Zalecany restart przed oddaniem komputera." -ForegroundColor Yellow
 }
